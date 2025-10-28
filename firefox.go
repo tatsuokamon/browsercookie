@@ -118,6 +118,12 @@ func (f *firefox) getCookiesIter() (func(func(*http.Cookie) bool), error) {
 					fmt.Println(err)
 					continue
 				}
+
+				defer func() {
+					os.Remove(fmt.Sprintf("%s-shm", file))
+					os.Remove(fmt.Sprintf("%s-wal", file))
+				}()
+
 				rows, err := db.Query("SELECT host, path, isSecure, expiry, name, value FROM moz_cookies")
 				if err != nil {
 					fmt.Println(err)

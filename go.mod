@@ -1,4 +1,4 @@
-module browsercookie
+module github.com/tatsuokamon/browsercookie
 
 go 1.25.0
 
