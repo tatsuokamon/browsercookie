@@ -2,6 +2,8 @@ package browsercookie
 
 import (
 	"database/sql"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +15,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/pierrec/lz4/v4"
 	"gopkg.in/ini.v1"
 )
 
@@ -96,8 +99,6 @@ func (f *firefox) findCookieFilesIter() (func(func(string) bool), error) {
 }
 
 func (f *firefox) getCookiesIter() (func(func(*http.Cookie) bool), error) {
-	// hasSessionFiles := false
-
 	cIter, err := f.findCookieFilesIter()
 	if err != nil {
 		return func(func(*http.Cookie) bool) {}, err
@@ -136,9 +137,62 @@ func (f *firefox) getCookiesIter() (func(func(*http.Cookie) bool), error) {
 					}
 				}
 			} else {
-				_, err := os.ReadFile(file)
+				body, _ := os.ReadFile(file)
+				// 頭はfirefoxのmagick wordm(8byte) と 圧縮後のサイズ(4byte)がある
+				deconpressedSize := binary.LittleEndian.Uint32(body[8:12]) + uint32(1000)
+				dist := make([]byte, deconpressedSize)
+				n, err := lz4.UncompressBlock(body[12:], dist)
 				if err != nil {
 					continue
+				}
+
+				type cookie struct {
+					Host  string `json:"host"`
+					Path  string `json:"path"`
+					Name  string `json:"name"`
+					Value string `json:"value"`
+				}
+
+				type window struct {
+					Cookies []cookie `json:"cookies"`
+				}
+
+				type assumedFileContent struct {
+					Cookies []cookie `json:"cookies"`
+					Windows []window `json:"windows"`
+				}
+
+				var content assumedFileContent
+
+				err = json.Unmarshal(dist[:n], &content)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+				for _, w := range content.Windows {
+					for _, c := range w.Cookies {
+						var result http.Cookie
+						result.Domain = c.Host
+						result.Path = c.Path
+						result.Name = c.Name
+						result.Value = c.Value
+
+						if !yield(&result) {
+							return
+						}
+					}
+				}
+
+				for _, c := range content.Cookies {
+					var result http.Cookie
+					result.Domain = c.Host
+					result.Path = c.Path
+					result.Name = c.Name
+					result.Value = c.Value
+
+					if !yield(&result) {
+						return
+					}
 				}
 			}
 		}
