@@ -2,7 +2,7 @@ package browsercookie
 
 import "net/http"
 
-func FireFox() ([]*http.Cookie, error) {
+func Firefox() ([]*http.Cookie, error) {
 	f := newFireFox()
 	return f.load()
 }

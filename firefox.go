@@ -158,7 +158,7 @@ func (f *firefox) getCookiesIter() (func(func(*http.Cookie) bool), error) {
 				}
 			} else {
 				body, _ := os.ReadFile(file)
-				// 頭はfirefoxのmagick wordm(8byte) と 圧縮後のサイズ(4byte)がある
+				// 頭はfirefoxのmagick word(8byte) と 圧縮後のサイズ(4byte)がある
 				deconpressedSize := binary.LittleEndian.Uint32(body[8:12]) + uint32(1000)
 				dist := make([]byte, deconpressedSize)
 				n, err := lz4.UncompressBlock(body[12:], dist)
