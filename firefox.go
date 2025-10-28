@@ -29,6 +29,20 @@ func (f *firefox) String() string {
 	return "firefox"
 }
 
+func (f *firefox) load() ([]*http.Cookie, error) {
+	result := []*http.Cookie{}
+	cIter, err := f.getCookiesIter()
+	if err != nil {
+		return result, err
+	}
+
+	for c := range cIter {
+		result = append(result, c)
+	}
+
+	return result, nil
+}
+
 func (f *firefox) parseProfile(profile string) (string, error) {
 	profileDir := path.Dir(profile)
 	cfg, err := ini.Load(profile)
