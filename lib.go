@@ -1,17 +1,18 @@
 package browsercookie
 
 import (
+	"fmt"
 	"io"
 	"os"
 )
 
-func createLocalCopy(cookiePath string) (string, error) {
+func createLocalCopy(cookiePath, suffix string) (string, error) {
 	src, err := os.Open(cookiePath)
 	if err != nil {
 		return "", err
 	}
 
-	tmpCookieFile, err := os.CreateTemp(".", "")
+	tmpCookieFile, err := os.CreateTemp(".", fmt.Sprintf("*%s", suffix))
 	if err != nil {
 		return "", err
 	}

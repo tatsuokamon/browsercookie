@@ -1,15 +1,24 @@
 package browsercookie
 
 import (
+	"database/sql"
 	"fmt"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 
 	"gopkg.in/ini.v1"
 )
+
+func newFireFox() *firefox {
+	return &firefox{browserCookieLoader{}}
+}
 
 type firefox struct{ browserCookieLoader }
 
@@ -53,32 +62,85 @@ func (f *firefox) findDefaultProfile() (string, error) {
 	return "", ErrNotImplemented
 }
 
-func (f *firefox) findCookieFiles(yield func(string)bool) {
-	profile, _ := f.findDefaultProfile()
-	_path, _ := f.parseProfile(profile)
-	cookieFile := fmt.Sprintf("%s/%s", _path, "cookies.sqlite")
+func (f *firefox) findCookieFilesIter() (func(func(string) bool), error) {
+	profile, err := f.findDefaultProfile()
+	if err != nil {
+		return func(func(string) bool) {}, err
+	}
+	_path, err := f.parseProfile(profile)
+	fmt.Println(_path)
+	if err != nil {
+		return func(func(string) bool) {}, err
+	}
+	cookieFile := path.Join(_path, "cookies.sqlite")
 	cookieDir := path.Dir(cookieFile)
 
-	for _, file := range []string{
-		path.Join(cookieDir, "sessionstrore-backups", "recovery.js"),
-		path.Join(cookieDir, "sessionstrore-backups", "recovery.json"),
-		path.Join(cookieDir, "sessionstrore-backups", "recovery.jsonlz4"),
-		path.Join(cookieDir, "sessionstrore.js"),
-		path.Join(cookieDir, "sessionstrore.json"),
-		path.Join(cookieDir, "sessionstrore.jsonlz4"),
-	} {
-		_, err := os.Open(file)
-		if err == nil || !os.IsNotExist(err) {
-			if !yield(file) {
-				return
+	return func(yield func(string) bool) {
+		for _, file := range []string{
+			path.Join(cookieDir, "sessionstore-backups", "recovery.js"),
+			path.Join(cookieDir, "sessionstore-backups", "recovery.json"),
+			path.Join(cookieDir, "sessionstore-backups", "recovery.jsonlz4"),
+			path.Join(cookieDir, "sessionstore.js"),
+			path.Join(cookieDir, "sessionstore.json"),
+			path.Join(cookieDir, "sessionstore.jsonlz4"),
+			cookieFile,
+		} {
+			_, err := os.Stat(file)
+			if err == nil || !os.IsNotExist(err) {
+				if !yield(file) {
+					return
+				}
 			}
 		}
-	}
+	}, nil
 }
 
-func (f *firefox)getCookies() {
-	hasSessionFiles := false
-	for cookieFile := range f.findCookieFiles {
-		file, err := createLocalCopy(cookieFile)
+func (f *firefox) getCookiesIter() (func(func(*http.Cookie) bool), error) {
+	// hasSessionFiles := false
+
+	cIter, err := f.findCookieFilesIter()
+	if err != nil {
+		return func(func(*http.Cookie) bool) {}, err
 	}
+
+	return func(yield func(*http.Cookie) bool) {
+		for cookieFile := range cIter {
+			file, err := createLocalCopy(cookieFile, path.Ext(cookieFile))
+			if err != nil {
+				continue
+			}
+			defer os.Remove(file)
+
+			if strings.HasSuffix(file, ".sqlite") {
+				db, err := sql.Open("sqlite3", file)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+				rows, err := db.Query("SELECT host, path, isSecure, expiry, name, value FROM moz_cookies")
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+
+				for rows.Next() {
+					var cookie http.Cookie
+					var i int64
+					err := rows.Scan(&cookie.Domain, &cookie.Path, &cookie.Secure, &i, &cookie.Name, &cookie.Value)
+					if err != nil {
+						continue
+					}
+					cookie.Expires = time.Unix(0, i*int64(time.Millisecond))
+					if !yield(&cookie) {
+						return
+					}
+				}
+			} else {
+				_, err := os.ReadFile(file)
+				if err != nil {
+					continue
+				}
+			}
+		}
+	}, nil
 }
