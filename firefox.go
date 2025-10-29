@@ -85,7 +85,6 @@ func (f *firefox) findCookieFilesIter() (func(func(string) bool), error) {
 		return func(func(string) bool) {}, err
 	}
 	_path, err := f.parseProfile(profile)
-	fmt.Println(_path)
 	if err != nil {
 		return func(func(string) bool) {}, err
 	}
@@ -129,7 +128,6 @@ func (f *firefox) getCookiesIter() (func(func(*http.Cookie) bool), error) {
 			if strings.HasSuffix(file, ".sqlite") {
 				db, err := sql.Open("sqlite3", file)
 				if err != nil {
-					fmt.Println(err)
 					continue
 				}
 
@@ -140,7 +138,6 @@ func (f *firefox) getCookiesIter() (func(func(*http.Cookie) bool), error) {
 
 				rows, err := db.Query("SELECT host, path, isSecure, expiry, name, value FROM moz_cookies")
 				if err != nil {
-					fmt.Println(err)
 					continue
 				}
 
@@ -157,40 +154,70 @@ func (f *firefox) getCookiesIter() (func(func(*http.Cookie) bool), error) {
 					}
 				}
 			} else {
-				body, _ := os.ReadFile(file)
-				// 頭はfirefoxのmagick word(8byte) と 圧縮後のサイズ(4byte)がある
-				deconpressedSize := binary.LittleEndian.Uint32(body[8:12]) + uint32(1000)
-				dist := make([]byte, deconpressedSize)
-				n, err := lz4.UncompressBlock(body[12:], dist)
-				if err != nil {
-					continue
+				var jsonData []byte
+				var err error
+				hasData := false
+
+				if strings.HasSuffix(file, "4") {
+					body, err := os.ReadFile(file)
+					if err != nil {
+						continue
+					}
+					// 頭はfirefoxのmagick word(8byte) と 圧縮後のサイズ(4byte)がある
+					deconpressedSize := binary.LittleEndian.Uint32(body[8:12]) + uint32(1000)
+					dist := make([]byte, deconpressedSize)
+					n, err := lz4.UncompressBlock(body[12:], dist)
+					if err != nil {
+						continue
+					}
+					jsonData = dist[:n]
+					hasData = true
+				} else {
+					jsonData, err = os.ReadFile(file)
+					if err != nil {
+						continue
+					}
+					hasData = true
 				}
 
-				type cookie struct {
-					Host  string `json:"host"`
-					Path  string `json:"path"`
-					Name  string `json:"name"`
-					Value string `json:"value"`
-				}
+				if hasData {
+					type cookie struct {
+						Host  string `json:"host"`
+						Path  string `json:"path"`
+						Name  string `json:"name"`
+						Value string `json:"value"`
+					}
 
-				type window struct {
-					Cookies []cookie `json:"cookies"`
-				}
+					type window struct {
+						Cookies []cookie `json:"cookies"`
+					}
 
-				type assumedFileContent struct {
-					Cookies []cookie `json:"cookies"`
-					Windows []window `json:"windows"`
-				}
+					type assumedFileContent struct {
+						Cookies []cookie `json:"cookies"`
+						Windows []window `json:"windows"`
+					}
 
-				var content assumedFileContent
+					var content assumedFileContent
 
-				err = json.Unmarshal(dist[:n], &content)
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-				for _, w := range content.Windows {
-					for _, c := range w.Cookies {
+					err = json.Unmarshal(jsonData, &content)
+					if err != nil {
+						continue
+					}
+					for _, w := range content.Windows {
+						for _, c := range w.Cookies {
+							var result http.Cookie
+							result.Domain = c.Host
+							result.Path = c.Path
+							result.Name = c.Name
+							result.Value = c.Value
+
+							if !yield(&result) {
+								return
+							}
+						}
+					}
+
+					for _, c := range content.Cookies {
 						var result http.Cookie
 						result.Domain = c.Host
 						result.Path = c.Path
@@ -200,18 +227,6 @@ func (f *firefox) getCookiesIter() (func(func(*http.Cookie) bool), error) {
 						if !yield(&result) {
 							return
 						}
-					}
-				}
-
-				for _, c := range content.Cookies {
-					var result http.Cookie
-					result.Domain = c.Host
-					result.Path = c.Path
-					result.Name = c.Name
-					result.Value = c.Value
-
-					if !yield(&result) {
-						return
 					}
 				}
 			}
