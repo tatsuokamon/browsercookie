@@ -7,4 +7,5 @@ var (
 
 	// Safari
 	ErrSafariOnlyOnOSX error = errors.New("Safari is only available on OSX")
+	ErrNegativeLength error = errors.New("negative length")
 )
